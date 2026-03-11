@@ -150,7 +150,7 @@ ${typeExtra}
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 4000,
+        max_tokens: 8000,
         system: systemPrompt,
         messages: [{ role: "user", content }]
       })

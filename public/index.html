@@ -439,6 +439,76 @@
     line-height: 1;
   }
 
+  .link-bar {
+    padding: 0 24px 12px;
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .link-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'Geologica', sans-serif;
+    font-size: 13px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .link-input:focus { border-color: var(--accent); }
+  .link-input::placeholder { color: var(--text3); }
+
+  .link-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-family: 'Geologica', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+    white-space: nowrap;
+  }
+
+  .link-btn:hover { border-color: var(--accent); color: var(--text); }
+  .link-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .file-chip .remove {
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .file-chip .remove:hover { color: var(--red); }
+
+  .attachments-area {
+    padding: 0 24px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
   @media (max-width: 640px) {
     main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: calc(100vh - 60px); }
     .panel { border-right: none; border-bottom: 1px solid var(--border); min-height: 280px; }
@@ -466,8 +536,12 @@
       <span class="panel-title">Исходный текст</span>
       <span class="counter" id="charCounter">0 симв.</span>
     </div>
-    <textarea id="inputText" placeholder="Вставь текст для проверки — пост, статью, описание объекта, письмо..."></textarea>
-    <div id="imagePreviewArea" style="display:none; padding: 0 24px 12px; flex-wrap:wrap; gap:8px;"></div>
+    <textarea id="inputText" placeholder="Вставь текст для проверки — или загрузи файл / вставь ссылку на Google Doc..."></textarea>
+    <div class="link-bar">
+      <input type="text" class="link-input" id="docLinkInput" placeholder="Ссылка на Google Docs или Slides...">
+      <button class="link-btn" id="fetchDocBtn" onclick="fetchDoc()">Загрузить</button>
+    </div>
+    <div class="attachments-area" id="attachmentsArea" style="display:none;"></div>
     <div class="action-bar">
       <select class="type-select" id="textType">
         <option value="post">Пост в соцсети</option>
@@ -476,8 +550,8 @@
         <option value="email">Письмо</option>
       </select>
       <label class="btn-clear" style="cursor:pointer; display:flex; align-items:center; gap:6px;">
-        <span>🖼</span> Фото
-        <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImages(this)">
+        📎 Файл
+        <input type="file" id="fileInput" accept="image/*,.pdf" multiple style="display:none" onchange="handleFiles(this)">
       </label>
       <button class="btn-check" id="checkBtn" onclick="checkText()">
         <span id="btnIcon">✦</span>
@@ -525,44 +599,83 @@ const textarea = document.getElementById('inputText');
 const charCounter = document.getElementById('charCounter');
 const checkBtn = document.getElementById('checkBtn');
 const textTypeSelect = document.getElementById('textType');
-let uploadedImages = [];
+// attachments: [{id, type: 'image'|'pdf', base64, mediaType, name}]
+let attachments = [];
 
 textarea.addEventListener('input', () => {
   charCounter.textContent = textarea.value.length.toLocaleString('ru') + ' симв.';
 });
 
-function handleImages(input) {
+// Fetch Google Doc/Slides
+async function fetchDoc() {
+  const url = document.getElementById('docLinkInput').value.trim();
+  if (!url) return;
+  const btn = document.getElementById('fetchDocBtn');
+  btn.disabled = true;
+  btn.textContent = 'Загружаю...';
+  try {
+    const resp = await fetch('/api/fetch-doc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    if (data.type === 'text') {
+      // Google Doc — вставляем текст
+      textarea.value = (textarea.value ? textarea.value + '\n\n' : '') + data.content;
+      charCounter.textContent = textarea.value.length.toLocaleString('ru') + ' симв.';
+    } else if (data.type === 'pdf') {
+      // Google Slides — добавляем как PDF
+      const id = Date.now() + Math.random();
+      attachments.push({ id, type: 'pdf', base64: data.content, mediaType: 'application/pdf', name: 'Google Slides.pdf' });
+      renderAttachments();
+    }
+    document.getElementById('docLinkInput').value = '';
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Загрузить';
+}
+
+// Handle file uploads (images + PDF)
+function handleFiles(input) {
   const files = Array.from(input.files);
   files.forEach(file => {
-    if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
     reader.onload = e => {
       const base64 = e.target.result.split(',')[1];
-      const mediaType = file.type;
       const id = Date.now() + Math.random();
-      uploadedImages.push({ id, base64, mediaType, name: file.name });
-      renderImagePreviews();
+      if (file.type === 'application/pdf') {
+        attachments.push({ id, type: 'pdf', base64, mediaType: 'application/pdf', name: file.name });
+      } else if (file.type.startsWith('image/')) {
+        attachments.push({ id, type: 'image', base64, mediaType: file.type, name: file.name });
+      }
+      renderAttachments();
     };
     reader.readAsDataURL(file);
   });
   input.value = '';
 }
 
-function renderImagePreviews() {
-  const area = document.getElementById('imagePreviewArea');
-  if (!uploadedImages.length) { area.style.display = 'none'; return; }
+function renderAttachments() {
+  const area = document.getElementById('attachmentsArea');
+  if (!attachments.length) { area.style.display = 'none'; return; }
   area.style.display = 'flex';
-  area.innerHTML = uploadedImages.map(img => `
-    <div class="img-thumb-wrap">
-      <img class="img-thumb" src="data:${img.mediaType};base64,${img.base64}" title="${escHtml(img.name)}">
-      <button class="img-remove" onclick="removeImage('${img.id}')">×</button>
-    </div>
-  `).join('');
+  area.innerHTML = attachments.map(att => {
+    const icon = att.type === 'pdf' ? '📄' : '🖼';
+    return `<div class="file-chip">
+      ${icon} ${escHtml(att.name)}
+      <button class="remove" onclick="removeAttachment('${att.id}')">×</button>
+    </div>`;
+  }).join('');
 }
 
-function removeImage(id) {
-  uploadedImages = uploadedImages.filter(i => String(i.id) !== String(id));
-  renderImagePreviews();
+function removeAttachment(id) {
+  attachments = attachments.filter(a => String(a.id) !== String(id));
+  renderAttachments();
 }
 
 function switchTab(name) {
@@ -575,8 +688,9 @@ function switchTab(name) {
 function clearAll() {
   textarea.value = '';
   charCounter.textContent = '0 симв.';
-  uploadedImages = [];
-  renderImagePreviews();
+  document.getElementById('docLinkInput').value = '';
+  attachments = [];
+  renderAttachments();
   ['issues','score','corrected'].forEach(id => {
     document.getElementById('content-' + id).innerHTML = emptyState(id);
   });
@@ -597,21 +711,29 @@ function showLoader(panel) {
 
 async function checkText() {
   const text = textarea.value.trim();
-  if (!text && !uploadedImages.length) return;
+  if (!text && !attachments.length) return;
 
   checkBtn.disabled = true;
   document.getElementById('btnText').textContent = 'Проверяю...';
   ['issues','score','corrected'].forEach(showLoader);
 
-  // Build content array
+  // Build content array for Claude API
   const contentParts = [];
-  uploadedImages.forEach(img => {
+
+  // Add images
+  attachments.filter(a => a.type === 'image').forEach(img => {
     contentParts.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.base64 } });
   });
+
+  // Add PDFs as documents
+  attachments.filter(a => a.type === 'pdf').forEach(pdf => {
+    contentParts.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdf.base64 } });
+  });
+
   if (text) {
     contentParts.push({ type: 'text', text: text });
   } else {
-    contentParts.push({ type: 'text', text: 'Проверь текст на картинке.' });
+    contentParts.push({ type: 'text', text: 'Проверь текст в приложенных файлах.' });
   }
 
   try {
