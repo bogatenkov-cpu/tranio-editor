@@ -737,14 +737,32 @@ async function checkText() {
   }
 
   try {
+    const reqBody = JSON.stringify({
+      content: contentParts,
+      textType: textTypeSelect.value
+    });
+
+    // Check payload size (~20 MB limit)
+    if (reqBody.length > 20 * 1024 * 1024) {
+      throw new Error('Файл слишком большой. Максимум ~15 МБ.');
+    }
+
     const resp = await fetch('/api/check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content: contentParts,
-        textType: textTypeSelect.value
-      })
+      body: reqBody
     });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      try {
+        const err = JSON.parse(text);
+        throw new Error(err.error || 'Ошибка сервера: ' + resp.status);
+      } catch(pe) {
+        if (pe.message.includes('Ошибка сервера') || pe.message.includes('Файл')) throw pe;
+        throw new Error('Ошибка сервера: ' + resp.status + '. Возможно, файл слишком большой.');
+      }
+    }
 
     const data = await resp.json();
 
